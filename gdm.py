@@ -1,8 +1,16 @@
 import yt_dlp
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    SpinnerColumn, 
+    TextColumn,
+    TransferSpeedColumn,
+)
 from urllib.parse import urlparse
 
 
-# ============================================================
+# ============================================================ko
 # URL VALIDATION
 # ============================================================
 
@@ -192,6 +200,47 @@ def get_download_options(url):
 # DOWNLOAD
 # ============================================================
 
+def show_progress(update, progress_ui, tasks):
+    """Update Rich's terminal bars from yt-dlp's real progress callbacks."""
+
+    status = update.get("status")
+    info = update.get("info_dict", {})
+    format_id = info.get("format_id")
+    stream_name = info.get("format_note") or info.get("resolution")
+    if not stream_name and format_id not in (None, "0", 0):
+        stream_name = format_id
+    label = f"Downloading {stream_name}" if stream_name else "Downloading media"
+    task_id = tasks.get(label)
+
+    if task_id is None:
+        task_id = progress_ui.add_task(
+            label, total=None, eta="calculating…", percent="  —"
+        )
+        tasks[label] = task_id
+
+    if status == "downloading":
+        total = update.get("total_bytes") or update.get("total_bytes_estimate")
+        downloaded = update.get("downloaded_bytes", 0)
+        progress_ui.update(
+            task_id,
+            total=total if total else None,
+            completed=downloaded,
+            speed=update.get("speed"),
+            eta=update.get("_eta_str", "calculating…"),
+            percent=update.get("_percent_str", "  —") if total else "  —",
+        )
+    elif status == "finished":
+        total = update.get("total_bytes") or update.get("total_bytes_estimate")
+        progress_ui.update(
+            task_id,
+            total=total or update.get("downloaded_bytes", 0),
+            completed=update.get("downloaded_bytes", total or 0),
+            description=f"Downloaded {stream_name}" if stream_name else "Downloaded media",
+            eta="done",
+            percent="100.0%",
+        )
+
+
 def download_media(url, options):
     """Download the media using yt-dlp."""
 
@@ -201,8 +250,29 @@ def download_media(url, options):
     try:
         print("\nStarting download...\n")
 
-        with yt_dlp.YoutubeDL(options) as downloader:
-            downloader.download([url])
+        progress_ui = Progress(
+            SpinnerColumn(),
+            TextColumn("{task.description:<22}"),
+            BarColumn(),
+            TextColumn("{task.fields[percent]:>6}"),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TextColumn("ETA {task.fields[eta]}"),
+            transient=False,
+        )
+
+        with progress_ui:
+            tasks = {}
+            download_options = {
+                **options,
+                "noprogress": True,
+                "progress_hooks": [
+                    lambda update: show_progress(update, progress_ui, tasks)
+                ],
+            }
+
+            with yt_dlp.YoutubeDL(download_options) as downloader:
+                downloader.download([url])
 
         print("\nDownload completed successfully.")
 
@@ -257,4 +327,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
